@@ -2,14 +2,13 @@
 /*
    Plugin Name: Модульбанк для WooCommerce
    Description: Платежный модуль для оплаты через Модульбанк через плагин WooCommerce
-   Version: 1.0
+   Version: 2.0
 */
 
-if (!class_exists('FPaymentsForm')) {
-    include(dirname(__FILE__) . '/inc/fpayments.php');
-}
-
 function init_modulbank() {
+    if (!class_exists('FPaymentsForm')) {
+        include(dirname(__FILE__) . '/inc/fpayments.php');
+    }
 
     class ModulbankCallback extends AbstractFPaymentsCallbackHandler {
         private $plugin;
@@ -170,6 +169,22 @@ function init_modulbank() {
                 $ff = $gw->get_fpayments_form();
                 $meta = '';
                 $description = '';
+
+                $receipt_contact = $order->get_billing_email() ?: $order->get_billing_phone() ?: '';
+                $receipt_items = array();
+                $order_items = $order->get_items();
+                foreach( $order_items as $product ) {
+                    $receipt_items[] = new FPaymentsRecieptItem(
+                        $product->get_name(),
+                        $product->get_total() / $product->get_quantity(),
+                        $product->get_quantity()
+                    );
+                }
+                $shipping_total = $order->get_shipping_total();
+                if ($shipping_total) {
+                    $receipt_items[] = new FPaymentsRecieptItem('Доставка', $shipping_total);
+                }
+
                 $data = $ff->compose(
                     $order->get_total(),
                     $order->get_currency(),
@@ -181,7 +196,9 @@ function init_modulbank() {
                     $gw->settings['fail_url'],
                     $gw->get_return_url($order),
                     $meta,
-                    $description
+                    $description,
+                    $receipt_contact,
+                    $receipt_items
                 );
 
                 $order->update_status( 'on-hold', 'Начало оплаты...');

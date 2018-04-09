@@ -1,98 +1,6 @@
 <?php
-/**
- *
- * 1. Вывод формы оплаты
- * ---------------------
- *
- * $ff = new FPaymentsForm($merchant_id, $secret_key, $is_test);
- *
- * // URL для отправки формы:
- * $url = $ff->get_url();
- *
- * // значения полей формы
- * $form = $ff->compose(
- *     $amount,        // сумма заказа
- *     $currency,      // валюта заказа (поддерживается только "RUB")
- *     $order_id,      // номер заказа
- *     $client_email,  // e-mail клиента (может быть '')
- *     $client_name,   // имя клиента (может быть '')
- *     $client_phone,  // телефон клиента (может быть '')
- *     $success_url,   // URL, куда направить клиента при успешной оплате
- *     $fail_url,      // URL, куда направить клиента при ошибке
- *     $cancel_url,    // URL текущей страницы
- *     $meta,          // дополнительная информация в свободной форме (необязательно)
- *     $description,   // описание (необязательно)
- *     $recurring_frequency,    // Частота периодических платежей (необязятельно, один из вариантов 'day', 'week',
- *                              //                                     'month', 'quartal', 'half-year', 'year')
- *     $recurring_finish_date,  // Конечная дата периодических платежей (необязательно, дата в формате 'YYYY-MM-DD')
- *     $recurrind_tx_id = '',   // Для рекуррентного платежа - id первой транзакции (необязательно)
- *     $recurring_token = '',   // Для рекуррентного платежа - токен рекуррентного платежа (необязательно)
- *     $receipt_contact,  // контакт (телефон или email) для чеков
- *     $receipt_items,    // массив элементов чека
- * );
- *
- * // далее можно самостоятельно вывести $form в виде hidden-полей,
- * // а можно воспользоваться готовым статическим методом array_to_hidden_fields:
- *
- * echo "<form action='$url' method='post'>" . FPaymentsForm::array_to_hidden_fields($form) . '<input type="submit"></form>';
- *
- *
- * 2. Приём сообщений о выполненных транзакциях (http://yoursite.com/callback.php)
- * -------------------------------------------------------------------------------
- * // создаём класс обработчика транзакций, который знает всё про статусы заказов в вашей системе
- * class MyCallbackHandler extends AbstractFPaymentsCallbackHandle {
- *     // предположим, вся логика вашего плагина содержится в классе MyPlugin
- *     private $plugin;
- *     function __construct(MyPlugin $plugin)              { $this->plugin = $plugin; }
- *     // определяем ключевые методы. Код методов приведён исключительно для примера
- *     protected function get_fpayments_form()             { return $this->plugin->get_fpayments_form(); }
- *     protected function load_order($order_id)            { return $this->plugin->load_order($order_id); }
- *     protected function get_order_currency($order)       { return $order->getCurrency(); }
- *     protected function get_order_amount($order)         { return $order->getAmount(); }
- *     protected function is_order_completed($order)       { return $order->getStatus() == 'completed'; }
- *     protected function mark_order_as_completed($order, array $data) {
- *         $order->setStatus('completed');
- *         $order->save()
- *     }
- *     protected function mark_order_as_error($order, array $data) {
- *         $order->setStatus('error');
- *         $order->save()
- *     }
- * }
- *
- * // схема ориентироваочная и зависит от архитектуры вашей CMS или фреймворка
- * $myplugin = new MyPlugin();
- * $h = new MyCallbackHandler($myplugin);
- * // обрабатываем сообщение от банка, пришедшее в _POST, и если всё хорошо, отмечаем заказ как оплаченный
- * $h->show($_POST);
- *
- *
- * 3. Отправка рекуррентного платежа
- * ---------------------------------
- *
- * $ff = new FPaymentsForm($merchant_id, $secret_key, $is_test);
- *
- * $result = $ff->rebill(
- *       $amount,           // сумма заказа
- *       $currency,         // валюта заказа (поддерживается только "RUB")
- *       $order_id,         // номер заказа
- *       $recurrind_tx_id,  // id транзакции, получен при первом платеже
- *       $recurring_token,  // токен рекуррентной транзакции, получен при первом платеже
- *       $description = ''  // описание заказа (необязательно)
- * );
- *
- */
 if (!function_exists('mb_str_split')) {
-    /**
-     * Convert a multibyte string to an array
-     * 
-     * @param  string  $string       The input string.
-     * @param  integer $split_length Maximum length of the chunk.
-     * @param  string  $encoding     The encoding parameter is the character encoding.
-     * @return array
-     */
-    function mb_str_split($string, $split_length = 1, $encoding = null)
-    {
+    function mb_str_split($string, $split_length = 1, $encoding = null) {
         if (is_null($encoding)) {
             $encoding = mb_internal_encoding();
         }
@@ -129,6 +37,7 @@ class FPaymentsForm {
     private $is_test;
     private $plugininfo;
     private $cmsinfo;
+    private $host;
 
     function __construct(
         $merchant_id,
@@ -168,10 +77,10 @@ class FPaymentsForm {
         $cancel_url,
         $meta = '',
         $description = '',
-        $recurring_frequency = '',
-        $recurring_finish_date = '',
         $receipt_contact = '',
-        array $receipt_items = null
+        array $receipt_items = null,
+        $recurring_frequency = '',
+        $recurring_finish_date = ''
     ) {
         if (!$description) {
             $description = "Заказ №$order_id";
@@ -207,7 +116,7 @@ class FPaymentsForm {
                 $items_arr[] = $item->as_dict();  
             }
             if ($items_sum != $amount) {
-                throw new FPaymentsError('Amounts mismatched');
+                throw new FPaymentsError("Amounts mismatched: ${items_sum} != ${amount}");
             }
             $form['receipt_contact'] = $receipt_contact;
             $form['receipt_items'] = json_encode($items_arr);

@@ -37,7 +37,6 @@ class FPaymentsForm {
     private $is_test;
     private $plugininfo;
     private $cmsinfo;
-    private $host;
 
     function __construct(
         $merchant_id,

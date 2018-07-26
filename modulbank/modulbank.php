@@ -1,8 +1,8 @@
 <?php
 /*
-   Plugin Name: Модульбанк для WooCommerce
-   Description: Платежный модуль для оплаты через Модульбанк через плагин WooCommerce
-   Version: 2.0
+   Plugin Name: Оплата через Модульбанк
+   Description: Платежный модуль WooCommerce для приема платежей с помощью Модульбанка.
+   Version: 0.1
 */
 
 function init_modulbank() {
@@ -43,7 +43,8 @@ function init_modulbank() {
 
         function __construct() {
             $this->id = FPaymentsConfig::PREFIX;
-            $this->method_title = FPaymentsConfig::NAME;
+            $this->method_title = __("Модульбанк");
+            $this->method_description = __("Оплата банковскими картами");
 
             $this->callback_url = get_home_url() . '/?modulbank=callback';
 
@@ -51,8 +52,8 @@ function init_modulbank() {
             $this->init_form_fields();
             $this->init_settings();
 
-            $this->title = $this->settings['title'];
-            $this->description = $this->settings['description'];
+            $this->title = __("Оплата банковской картой через Модульбанк");
+            $this->description = '';
 
             if (version_compare(WOOCOMMERCE_VERSION, '2.0.0', '>=')) {
                 add_action(
@@ -68,52 +69,55 @@ function init_modulbank() {
         function init_form_fields() {
             $this->form_fields = array(
                 'enabled' => array(
-                    'title' => __('Включить/Выключить', 'modulbank'),
+                    'title' => __('Платежный метод активен', 'modulbank'),
                     'type' => 'checkbox',
-                    'label' => 'Включено',
+                    'label' => ' ',
                     'default' => 'yes',
-                    'description' => 'ВАЖНО: необходимо прописать callback_url: "' . $this->callback_url . '"',
+                    'description' => '',
                 ),
                 'merchant_id' => array(
-                    'title' => 'Merchant ID',
+                    'title' => 'Идентификатор магазина',
                     'type' => 'text',
-                    'description' => __('ID магазина (из панели управления)', 'modulbank'),
+                    'description' => __('merchant_id из личного кабинета Модульбанка', 'modulbank'),
                     'default' => '',
                 ),
                 'secret_key' => array(
-                    'title' => 'Secret key',
+                    'title' => 'Секретный ключ',
                     'type' => 'text',
-                    'description' => __('Секретный ключ магазина (из панели управления)', 'modulbank'),
+                    'description' => __('secret_key из личного кабинета Модульбанка', 'modulbank'),
                     'default' => '',
                 ),
-                'success_url' => array(
-                    'title' => 'Страница «платёж прошёл»',
-                    'type' => 'text',
-                    'default' => FPaymentsForm::abs('/success'),
-                ),
-                'fail_url' => array(
-                    'title' => 'Страница «платёж не удался»',
-                    'type' => 'text',
-                    'default' => FPaymentsForm::abs('/fail'),
-                ),
+#                'success_url' => array(
+#                    'title' => 'Страница «платёж прошёл»',
+#                    'type' => 'text',
+#                    'default' => FPaymentsForm::abs('/success'),
+#                ),
+#                'fail_url' => array(
+#                    'title' => 'Страница «платёж не удался»',
+#                    'type' => 'text',
+#                    'default' => FPaymentsForm::abs('/fail'),
+#                ),
                 'test_mode' => array(
                     'title' => __('Тестовый режим', 'modulbank'),
                     'type' => 'checkbox',
                     'label' => __('Тестовый режим', 'modulbank'),
                     'default' => 'yes',
+                    'description' => __('Тестовый режим используется для проверки работы интеграции. При выполнении тестовых транзакций реального зачисления среств на счет магазина не производится.',
+                        'modulbank'
                 ),
-                'title' => array(
-                    'title' => __('Заголовок', 'modulbank'),
-                    'type' => 'text',
-                    'description' => __('Название, которое пользователь видит во время оплаты', 'modulbank'),
-                    'default' => FPaymentsConfig::NAME,
                 ),
-                'description' => array(
-                    'title' => __('Описание', 'modulbank'),
-                    'type' => 'textarea',
-                    'description' => __('Описание, которое пользователь видит во время оплаты', 'modulbank'),
-                    'default' => '',
-                ),
+#                'title' => array(
+#                    'title' => __('Заголовок', 'modulbank'),
+#                    'type' => 'text',
+#                    'description' => __('Название, которое пользователь видит во время оплаты', 'modulbank'),
+#                    'default' => "Оплатить банковской картой через Модульбанк",
+#                ),
+#                'description' => array(
+#                    'title' => __('Описание', 'modulbank'),
+#                    'type' => 'textarea',
+#                    'description' => __('Описание, которое пользователь видит во время оплаты', 'modulbank'),
+#                    'default' => '',
+#                ),
             );
         }
 

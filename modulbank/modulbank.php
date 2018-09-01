@@ -6,17 +6,17 @@
 */
 
 
-use FPayments\AbstractFPaymentsCallbackHandler;
-use FPayments\FPaymentsConfig;
-use FPayments\FPaymentsForm;
-use FPayments\FPaymentsReceiptItem;
+use FPayments\AbstractCallbackHandler;
+use FPayments\ModuleConfig;
+use FPayments\PaymentForm;
+use FPayments\ReceiptItem;
 
 function init_modulbank() {
-    if (!class_exists('FPaymentsForm')) {
+    if (!class_exists('PaymentForm')) {
         include(dirname(__FILE__) . '/inc/fpayments.php');
     }
 
-    class ModulbankCallback extends AbstractFPaymentsCallbackHandler {
+    class ModulbankCallback extends AbstractCallbackHandler {
         private $plugin;
         function __construct(WC_Gateway_Modulbank $plugin)  {
             $this->plugin = $plugin;
@@ -50,7 +50,7 @@ function init_modulbank() {
 
     class WC_Gateway_Modulbank extends WC_Payment_Gateway {
         function __construct() {
-            $this->id = FPaymentsConfig::PREFIX;
+            $this->id = ModuleConfig::PREFIX;
             $this->method_title = __("Модульбанк");
             $this->method_description = __("Оплата банковскими картами");
 
@@ -116,7 +116,7 @@ function init_modulbank() {
         }
 
         public function get_fpayments_form() {
-            return new FPaymentsForm(
+            return new PaymentForm(
                 $this->settings['merchant_id'],
                 $this->settings['secret_key'],
                 boolval($this->settings['test_mode']),
@@ -138,7 +138,7 @@ function init_modulbank() {
 
         function get_transaction_url($order) {
             $transaction_id = $order->get_transaction_id();
-            $url = FPaymentsConfig::HOST
+            $url = ModuleConfig::HOST
                 . '/account/merchants/'
                 . $this->settings['merchant_id']
                 . '/transactions/?q='.$transaction_id;
@@ -167,7 +167,7 @@ function init_modulbank() {
             $first_item = reset($tax_info);  // the first element can have 0 or 1 index.
             $tax_rate = $first_item['rate'];
             if ($tax_rate) {
-                $vat_code = FPaymentsReceiptItem::guess_vat($tax_rate);
+                $vat_code = ReceiptItem::guess_vat($tax_rate);
             }
 
             if (!$vat_code) {
@@ -197,7 +197,7 @@ function init_modulbank() {
                     $vat_code = _tax_class_to_vat_code($tax_class);
 
                     $price = $order_item->get_total() + $order_item->get_total_tax();
-                    $receipt_items[] = new FPaymentsReceiptItem(
+                    $receipt_items[] = new ReceiptItem(
                         $order_item->get_name(),
                         $price / $order_item->get_quantity(),
                         $order_item->get_quantity(),
@@ -209,7 +209,7 @@ function init_modulbank() {
                     $tax_class = $shipping_item->get_tax_class();
                     $vat_code = _tax_class_to_vat_code($tax_class);
 
-                    $receipt_items[] = new FPaymentsReceiptItem(
+                    $receipt_items[] = new ReceiptItem(
                         $shipping_item->get_name(),
                         $shipping_item->get_total() + $shipping_item->get_total_tax(),
                         1,

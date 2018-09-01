@@ -31,10 +31,10 @@ if (!function_exists('stripslashes_gpc')) {
 require_once "fpayments_config.php";
 
 
-class FPaymentsError extends \Exception {}
+class FormError extends \Exception {}
 
 
-class FPaymentsForm {
+class PaymentForm {
     private $merchant_id;
     private $secret_key;
     private $is_test;
@@ -58,7 +58,7 @@ class FPaymentsForm {
     }
 
     public static function abs($path) {
-        return FPaymentsConfig::HOST . $path;
+        return ModuleConfig::HOST . $path;
     }
 
     function get_url() {
@@ -128,7 +128,7 @@ class FPaymentsForm {
         );
         if ($receipt_items) {
             if (!$receipt_contact) {
-                throw new FPaymentsError('receipt_contact required');
+                throw new FormError('receipt_contact required');
             }
             $items_sum = 0;
             $items_arr = array();
@@ -138,7 +138,7 @@ class FPaymentsForm {
             }
             $items_sum = round($items_sum, 2);
             if ($items_sum != $amount) {
-                throw new FPaymentsError("Amounts mismatch: sum of cart items: ${items_sum}, order amount: ${amount}");
+                throw new FormError("Amounts mismatch: sum of cart items: ${items_sum}, order amount: ${amount}");
             }
             $form['receipt_contact'] = $receipt_contact;
             $form['receipt_items'] = json_encode($items_arr);
@@ -269,9 +269,9 @@ class FPaymentsForm {
 }
 
 
-abstract class AbstractFPaymentsCallbackHandler {
+abstract class AbstractCallbackHandler {
     /**
-    * @return FPaymentsForm
+    * @return PaymentForm
     */
     abstract protected function get_fpayments_form();
     abstract protected function load_order($order_id);
@@ -340,7 +340,7 @@ abstract class AbstractFPaymentsCallbackHandler {
 }
 
 
-class FPaymentsReceiptItem {
+class ReceiptItem {
     const NO_VAT  = 'none';   # без НДС
     const VAT_0   = 'vat0';    # НДС по ставке 0%
     const VAT_10  = 'vat10';   # НДС чека по ставке 10%

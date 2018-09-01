@@ -5,6 +5,12 @@
    Version: 0.1
 */
 
+
+use FPayments\AbstractFPaymentsCallbackHandler;
+use FPayments\FPaymentsConfig;
+use FPayments\FPaymentsForm;
+use FPayments\FPaymentsReceiptItem;
+
 function init_modulbank() {
     if (!class_exists('FPaymentsForm')) {
         include(dirname(__FILE__) . '/inc/fpayments.php');
@@ -31,22 +37,23 @@ function init_modulbank() {
             return $order->is_paid();
         }
         protected function mark_order_as_completed($order, array $data) {
-            $order->payment_complete();
+            WC()->cart->empty_cart();
+            wc_reduce_stock_levels($order->get_id());
+            $order->payment_complete($data['transaction_id']);
+            return true;
         }
         protected function mark_order_as_error($order, array $data) {
-            //
+            $order->update_status('failed', $data['message']);
+            return true;
         }
     }
 
     class WC_Gateway_Modulbank extends WC_Payment_Gateway {
-        private $callback_url;
-
         function __construct() {
             $this->id = FPaymentsConfig::PREFIX;
             $this->method_title = __("Модульбанк");
             $this->method_description = __("Оплата банковскими картами");
 
-            $this->callback_url = get_home_url() . '/?modulbank=callback';
 
             $this->has_fields = false;
             $this->init_form_fields();
@@ -87,16 +94,6 @@ function init_modulbank() {
                     'description' => __('secret_key из личного кабинета Модульбанка', 'modulbank'),
                     'default' => '',
                 ),
-#                'success_url' => array(
-#                    'title' => 'Страница «платёж прошёл»',
-#                    'type' => 'text',
-#                    'default' => FPaymentsForm::abs('/success'),
-#                ),
-#                'fail_url' => array(
-#                    'title' => 'Страница «платёж не удался»',
-#                    'type' => 'text',
-#                    'default' => FPaymentsForm::abs('/fail'),
-#                ),
                 'test_mode' => array(
                     'title' => __('Тестовый режим', 'modulbank'),
                     'type' => 'checkbox',
@@ -104,20 +101,8 @@ function init_modulbank() {
                     'default' => 'yes',
                     'description' => __('Тестовый режим используется для проверки работы интеграции. При выполнении тестовых транзакций реального зачисления среств на счет магазина не производится.',
                         'modulbank'
+                    ),
                 ),
-                ),
-#                'title' => array(
-#                    'title' => __('Заголовок', 'modulbank'),
-#                    'type' => 'text',
-#                    'description' => __('Название, которое пользователь видит во время оплаты', 'modulbank'),
-#                    'default' => "Оплатить банковской картой через Модульбанк",
-#                ),
-#                'description' => array(
-#                    'title' => __('Описание', 'modulbank'),
-#                    'type' => 'textarea',
-#                    'description' => __('Описание, которое пользователь видит во время оплаты', 'modulbank'),
-#                    'default' => '',
-#                ),
             );
         }
 
@@ -140,7 +125,6 @@ function init_modulbank() {
             );
         }
 
-
         public function process_payment( $order_id ) {
             return array(
                 'result'    => 'success',
@@ -149,7 +133,17 @@ function init_modulbank() {
         }
 
         function get_current_url() {
-            return add_query_arg( $_SERVER['QUERY_STRING'], '', get_home_url($_SERVER['REQUEST_URI']) . '/');
+            return add_query_arg($_SERVER['QUERY_STRING'], '', get_home_url($_SERVER['REQUEST_URI']) . '/');
+        }
+
+        function get_transaction_url($order) {
+            $transaction_id = $order->get_transaction_id();
+            $url = FPaymentsConfig::HOST
+                . '/account/merchants/'
+                . $this->settings['merchant_id']
+                . '/transactions/?q='.$transaction_id;
+
+            return apply_filters('woocommerce_get_transaction_url', $url, $order, $this );
         }
     }
 
@@ -158,9 +152,30 @@ function init_modulbank() {
         return $methods;
     }
 
-    add_filter( 'woocommerce_payment_gateways', 'add_modulbank_gateway_class' );
-
+    add_filter('woocommerce_payment_gateways', 'add_modulbank_gateway_class');
     add_action('parse_request', 'parse_modulbank_request');
+
+    /**
+     * Возвращает код налога для класса налога WC
+     * @param string класс налога
+     * @return string код налога (напр. vat18)
+     */
+    function _tax_class_to_vat_code($class) {
+        $vat_code = 'none';
+        if (wc_tax_enabled()) {
+            $tax_info = WC_Tax::get_rates($class);
+            $first_item = reset($tax_info);  // the first element can have 0 or 1 index.
+            $tax_rate = $first_item['rate'];
+            if ($tax_rate) {
+                $vat_code = FPaymentsReceiptItem::guess_vat($tax_rate);
+            }
+
+            if (!$vat_code) {
+                die("Неподдерживаемый тип налога со ставкой $tax_rate%");
+            }
+        }
+        return $vat_code;
+    }
 
     function parse_modulbank_request() {
         if (array_key_exists('modulbank', $_GET)) {
@@ -170,24 +185,40 @@ function init_modulbank() {
                 $callback_handler->show($_POST);
             } elseif ($_GET['modulbank'] == 'submit') {
                 $order = wc_get_order($_GET['order_id']);
-                $ff = $gw->get_fpayments_form();
                 $meta = '';
                 $description = '';
 
                 $receipt_contact = $order->get_billing_email() ?: $order->get_billing_phone() ?: '';
                 $receipt_items = array();
-                $order_items = $order->get_items();
-                foreach( $order_items as $product ) {
-                    $receipt_items[] = new FPaymentsRecieptItem(
-                        $product->get_name(),
-                        $product->get_total() / $product->get_quantity(),
-                        $product->get_quantity()
+
+                foreach($order->get_items() as $order_item) {
+                    $product = $order_item->get_product();
+                    $tax_class = $product->get_tax_class();
+                    $vat_code = _tax_class_to_vat_code($tax_class);
+
+                    $price = $order_item->get_total() + $order_item->get_total_tax();
+                    $receipt_items[] = new FPaymentsReceiptItem(
+                        $order_item->get_name(),
+                        $price / $order_item->get_quantity(),
+                        $order_item->get_quantity(),
+                        $vat_code
                     );
                 }
-                $shipping_total = $order->get_shipping_total();
-                if ($shipping_total) {
-                    $receipt_items[] = new FPaymentsRecieptItem('Доставка', $shipping_total);
+
+                foreach ($order->get_shipping_methods() as $shipping_item) {
+                    $tax_class = $shipping_item->get_tax_class();
+                    $vat_code = _tax_class_to_vat_code($tax_class);
+
+                    $receipt_items[] = new FPaymentsReceiptItem(
+                        $shipping_item->get_name(),
+                        $shipping_item->get_total() + $shipping_item->get_total_tax(),
+                        1,
+                        $vat_code
+                    );
                 }
+
+                $ff = $gw->get_fpayments_form();
+                $ff->enable_callback_on_failure();
 
                 $data = $ff->compose(
                     $order->get_total(),
@@ -196,27 +227,25 @@ function init_modulbank() {
                     $order->get_billing_email(),
                     '',  # name
                     $order->get_billing_phone(),
-                    $gw->settings['success_url'],
-                    $gw->settings['fail_url'],
                     $gw->get_return_url($order),
+                    $order->get_cancel_order_url(),
+                    $order->get_cancel_order_url(),
+                    get_home_url() . '/?modulbank=callback',
                     $meta,
                     $description,
                     $receipt_contact,
                     $receipt_items
                 );
 
-                $order->update_status( 'on-hold', 'Начало оплаты...');
-                $order->reduce_order_stock();
-                WC()->cart->empty_cart();
-
+                $order->update_status('pending', 'Начало оплаты...');
                 $templates_dir = dirname(__FILE__) . '/templates/';
                 include $templates_dir . 'submit.php';
             } else {
-                echo("wrong action");
+                echo('wrong action');
             }
             die();
         }
     }
 }
 
-add_action( 'plugins_loaded', 'init_modulbank');
+add_action('plugins_loaded', 'init_modulbank');

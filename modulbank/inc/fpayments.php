@@ -1,4 +1,7 @@
 <?php
+
+namespace FPayments;
+
 if (!function_exists('mb_str_split')) {
     function mb_str_split($string, $split_length = 1, $encoding = null) {
         if (is_null($encoding)) {
@@ -28,7 +31,7 @@ if (!function_exists('stripslashes_gpc')) {
 require_once "fpayments_config.php";
 
 
-class FPaymentsError extends Exception {}
+class FPaymentsError extends \Exception {}
 
 
 class FPaymentsForm {
@@ -37,6 +40,7 @@ class FPaymentsForm {
     private $is_test;
     private $plugininfo;
     private $cmsinfo;
+    private $callback_on_failure;
 
     function __construct(
         $merchant_id,
@@ -50,6 +54,7 @@ class FPaymentsForm {
         $this->is_test = (bool) $is_test;
         $this->plugininfo = $plugininfo ?: 'FPayments/PHP v.' . phpversion();
         $this->cmsinfo = $cmsinfo;
+        $this->callback_on_failure = false;
     }
 
     public static function abs($path) {
@@ -60,8 +65,22 @@ class FPaymentsForm {
         return self::abs('/pay/');
     }
 
+    function get_transaction_info_url() {
+        return self::abs('/api/v1/transaction/');
+    }
+
     function get_rebill_url() {
         return self::abs('/api/v1/rebill/');
+    }
+
+    function enable_callback_on_failure() {
+        $this->callback_on_failure = true;
+        return $this;
+    }
+
+    function disable_callback_on_failure() {
+        $this->callback_on_failure = true;
+        return $this;
     }
 
     function compose(
@@ -74,6 +93,7 @@ class FPaymentsForm {
         $success_url,
         $fail_url,
         $cancel_url,
+        $callback_url,
         $meta = '',
         $description = '',
         $receipt_contact = '',
@@ -99,6 +119,8 @@ class FPaymentsForm {
             'success_url'           => $success_url,
             'fail_url'              => $fail_url,
             'cancel_url'            => $cancel_url,
+            'callback_url'          => $callback_url,
+            'callback_on_failure'   => $this->callback_on_failure,
             'meta'                  => $meta,
             'sysinfo'               => $this->get_sysinfo(),
             'recurring_frequency'   => $recurring_frequency,
@@ -112,10 +134,11 @@ class FPaymentsForm {
             $items_arr = array();
             foreach ($receipt_items as $item) {
                 $items_sum += $item->get_sum();
-                $items_arr[] = $item->as_dict();  
+                $items_arr[] = $item->as_dict();
             }
+            $items_sum = round($items_sum, 2);
             if ($items_sum != $amount) {
-                throw new FPaymentsError("Amounts mismatched: ${items_sum} != ${amount}");
+                throw new FPaymentsError("Amounts mismatch: sum of cart items: ${items_sum}, order amount: ${amount}");
             }
             $form['receipt_contact'] = $receipt_contact;
             $form['receipt_items'] = json_encode($items_arr);
@@ -126,7 +149,6 @@ class FPaymentsForm {
 
     private function get_sysinfo() {
         return json_encode(array(
-            'json_enabled' => true,
             'language' => 'PHP ' . phpversion(),
             'plugin' => $this->plugininfo,
             'cms' => $this->cmsinfo,
@@ -216,6 +238,34 @@ class FPaymentsForm {
         curl_close($ch);
         return json_decode($result);
     }
+
+    function getTransactionInfo($transaction_id) {
+        $form = array(
+            'transaction_id'        => $transaction_id,
+            'merchant'              => $this->merchant_id,
+            'unix_timestamp'        => time(),
+            'salt'                  => $this->get_salt(32),
+        );
+        $form['signature'] = $this->get_signature($form);
+        $paramstr = http_build_query($form);
+        $ch = curl_init($this->get_transaction_info_url() . '?' . $paramstr);
+        curl_setopt($ch, CURLOPT_USERAGENT, $this->plugininfo);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        $result = curl_exec($ch);
+
+        if (curl_error($ch)) {
+            error_log("Error while requesting transaction info: ".curl_error($ch));
+            return;
+        }
+        curl_close($ch);
+
+        $data = json_decode($result, true);
+
+        if ($data['status'] != 'ok') {
+            return;
+        }
+        return $data['transaction'];
+    }
 }
 
 
@@ -271,9 +321,9 @@ abstract class AbstractFPaymentsCallbackHandler {
             $debug_messages[] = "info: order not completed";
             if (!$this->is_order_completed($order)) {
                 if ($this->mark_order_as_error($order, $data)) {
-                    $debug_messages[] = "mark order as error";
+                    $debug_messages[] = "order status changed to 'failed'";
                 } else {
-                    $error = "Can't mark order as error";
+                    $error = "Can't change order status to 'failed'";
                 }
             }
         }
@@ -281,7 +331,7 @@ abstract class AbstractFPaymentsCallbackHandler {
         if ($error) {
             echo "ERROR: $error\n";
         } else {
-            echo "OK$order_id\n";
+            echo "OK $order_id\n";
         }
         foreach ($debug_messages as $msg) {
             echo "...$msg\n";
@@ -290,39 +340,39 @@ abstract class AbstractFPaymentsCallbackHandler {
 }
 
 
-class FPaymentsRecieptItem {
-    const TAX_NO_NDS = 1;  # без НДС;
-    const TAX_0_NDS = 2;  # НДС по ставке 0%;
-    const TAX_10_NDS = 3;  # НДС чека по ставке 10%;
-    const TAX_18_NDS = 4;  # НДС чека по ставке 18%
-    const TAX_10_110_NDS = 5;  # НДС чека по расчетной ставке 10/110;
-    const TAX_18_118_NDS = 6;  # НДС чека по расчетной ставке 18/118.
+class FPaymentsReceiptItem {
+    const NO_VAT  = 'none';   # без НДС
+    const VAT_0   = 'vat0';    # НДС по ставке 0%
+    const VAT_10  = 'vat10';   # НДС чека по ставке 10%
+    const VAT_18  = 'vat18';   # НДС чека по ставке 18%
+    const VAT_20  = 'vat20';   # НДС чека по ставке 18%
+    const VAT_110 = 'vat110';  # НДС чека по расчетной ставке 10/110
+    const VAT_118 = 'vat118';  # НДС чека по расчетной ставке 18/118
 
     private $title;
-    private $amount;
+    private $price;
     private $n;
     private $nds;
 
-    function __construct($title, $amount, $n = 1, $nds = null) {
+    function __construct($title, $price, $n = 1, $nds = null) {
         $this->title = self::clean_title($title);
-        $this->amount = $amount;
+        $this->price = $price;
         $this->n = $n;
-        $this->nds = $nds ? $nds : self::TAX_0_NDS;
+        $this->nds = $nds ? $nds : self::NO_VAT;
     }
 
     function as_dict() {
         return array(
             'quantity' => $this->n,
-            'price' => array(
-                'amount' => $this->amount,
-            ),
-            'tax' => $this->nds,
-            'text' => $this->title,
+            'price' => $this->price,
+            'vat' => $this->nds,
+            'name' => $this->title,
         );
     }
 
     function get_sum() {
-        return $this->n * $this->amount;
+        $result = $this->n * $this->price;
+        return $result;
     }
 
     private static function clean_title($s, $max_chars=64) {
@@ -338,5 +388,17 @@ class FPaymentsRecieptItem {
             }
         }
         return $result;
+    }
+
+    static function guess_vat($rate) {
+        if ($rate == 0) {
+            return 'vat0';
+        } else if ($rate == 10) {
+            return 'vat10';
+        } else if ($rate == 18) {
+            return 'vat18';
+        } else if ($rate == 20) {
+            return 'vat20';  // I can see the future
+        }
     }
 }
